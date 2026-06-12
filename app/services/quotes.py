@@ -3,7 +3,9 @@
 import asyncio
 import logging
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from src.tools.api import fetch_latest_nav
@@ -81,3 +83,150 @@ def compute_max_drawdown(navs: list[float]) -> Optional[float]:
             if dd > max_dd:
                 max_dd = dd
     return max_dd
+
+
+# ===== 模块级锁 & 状态 flag =====
+_refresh_lock: asyncio.Lock = asyncio.Lock()
+_refresh_running: bool = False
+
+
+def _date_to_ts(date_str: str) -> int:
+    """YYYY-MM-DD -> epoch seconds. Returns 0 on failure."""
+    try:
+        return int(datetime.strptime(date_str, "%Y-%m-%d").timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+
+# fetch_nav_history 在 src.tools.api 中已存在; 退化为空列表保护
+try:
+    from src.tools.api import fetch_nav_history  # noqa: F811
+except ImportError:
+    logger.warning("fetch_nav_history not available; max_drawdown will be None")
+    fetch_nav_history = lambda code, **kw: []  # type: ignore[assignment]
+
+
+def get_favorite_with_metrics(code: str) -> Optional[FavoriteWithMetrics]:
+    """
+    同步函数:
+    1. list_favorites() 找到 row
+    2. asyncio.run(fetch_quote(code)) 拿 quote
+    3. fetch_nav_history(code, months=3) 算 max_drawdown
+    4. 计算 shares/current_value/return_pct
+    """
+    favs = list_favorites()
+    row = None
+    for fav in favs:
+        if fav["code"] == code:
+            row = fav
+            break
+    if not row:
+        return None
+
+    quote = asyncio.run(fetch_quote(code))
+
+    buy_price: Optional[float] = row.get("buy_price")
+    buy_amount: Optional[float] = row.get("buy_amount")
+    buy_date: Optional[str] = row.get("buy_date")
+
+    current_nav = quote.nav if quote else None
+    current_value: Optional[float] = None
+    return_pct: Optional[float] = None
+    max_dd: Optional[float] = None
+
+    if buy_price and buy_amount and current_nav:
+        shares = buy_amount / buy_price
+        current_value = shares * current_nav
+        return_pct = (current_value - buy_amount) / buy_amount
+
+    # max_drawdown from nav history (~90 days = 3 months)
+    if buy_date and current_nav:
+        try:
+            navs_raw = fetch_nav_history(code, months=3)
+            navs = [n.nav for n in navs_raw if n.nav is not None]
+            max_dd = compute_max_drawdown(navs)
+        except Exception:
+            logger.warning("Failed to compute max_drawdown for %s", code, exc_info=True)
+
+    if not quote:
+        status = "no_quote"
+    elif max_dd is None:
+        status = "no_history"
+    else:
+        status = "ok"
+
+    return FavoriteWithMetrics(
+        code=code,
+        name=row.get("name", ""),
+        buy_price=buy_price,
+        buy_amount=buy_amount,
+        buy_date=buy_date,
+        current_nav=current_nav,
+        current_value=current_value,
+        return_pct=return_pct,
+        max_drawdown=max_dd,
+        status=status,
+    )
+
+
+async def batch_refresh_quotes() -> AsyncGenerator[dict, None]:
+    """
+    SSE 事件流 — asyncio.Semaphore(3) 限速并发:
+    - start:   {"event": "start", "total": N}
+    - progress:{"event": "progress", "code": ..., "ok": bool, "fail": bool}
+    - keep-al: {"event": "keep-alive", "ts": ...}  (20s 无 progress)
+    - done:    {"event": "done", "ok": X, "fail": Y}
+    """
+    global _refresh_running
+    async with _refresh_lock:
+        if _refresh_running:
+            return
+
+        _refresh_running = True
+        try:
+            favs = list_favorites()
+            total = len(favs)
+            start_ts = time.time()
+
+            yield {"event": "start", "total": total}
+
+            if total == 0:
+                yield {"event": "done", "ok": 0, "fail": 0}
+                return
+
+            sem = asyncio.Semaphore(3)
+            ok_count = 0
+            fail_count = 0
+            last_activity = time.time()
+
+            async def refresh_one(fav: dict) -> dict:
+                nonlocal ok_count, fail_count
+                async with sem:
+                    code = fav["code"]
+                    # 绕过 60s cache 强制刷新
+                    _quote_cache.pop(code, None)
+                    try:
+                        quote = await fetch_quote(code)
+                        if quote:
+                            ok_count += 1
+                            return {"event": "progress", "code": code, "ok": True, "fail": False}
+                        else:
+                            fail_count += 1
+                            return {"event": "progress", "code": code, "ok": False, "fail": True}
+                    except Exception:
+                        fail_count += 1
+                        logger.exception("Failed to refresh %s", code)
+                        return {"event": "progress", "code": code, "ok": False, "fail": True}
+
+            tasks = [asyncio.create_task(refresh_one(f)) for f in favs]
+            for coro in asyncio.as_completed(tasks):
+                now = time.time()
+                if now - last_activity >= 20:
+                    yield {"event": "keep-alive", "ts": int(now)}
+                    last_activity = now
+                yield await coro
+                last_activity = time.time()
+
+            yield {"event": "done", "ok": ok_count, "fail": fail_count}
+        finally:
+            _refresh_running = False
