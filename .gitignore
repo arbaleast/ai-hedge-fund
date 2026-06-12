@@ -23,6 +23,7 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+.venv/
 
 # Environment Variables
 .env
@@ -65,5 +66,8 @@ outputs/
 *.sqlite
 *.sqlite3
 
-# Alembic (keep migration files, but ignore generated/cache files)
-app/backend/alembic/versions/__pycache__/
+# App local data
+data/
+
+# Vite build cache
+.vite/
