@@ -82,6 +82,8 @@ def compute_max_drawdown(navs: list[float]) -> Optional[float]:
             dd = (peak - nav) / peak
             if dd > max_dd:
                 max_dd = dd
+    if peak == 0:
+        return None
     return max_dd
 
 
@@ -103,7 +105,8 @@ try:
     from src.tools.api import fetch_nav_history  # noqa: F811
 except ImportError:
     logger.warning("fetch_nav_history not available; max_drawdown will be None")
-    fetch_nav_history = lambda code, **kw: []  # type: ignore[assignment]
+    def fetch_nav_history(code: str, **kw: object) -> list:
+        return []  # noqa: F811
 
 
 def get_favorite_with_metrics(code: str) -> Optional[FavoriteWithMetrics]:

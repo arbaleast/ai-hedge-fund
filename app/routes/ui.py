@@ -17,6 +17,7 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>我的基金组合</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
 <style>
 /* ===== Reset & Variables ===== */
 :root {
@@ -565,8 +566,8 @@ async function loadFavorites() {
       html += '<td class="col-num ' + ddClass + ' col-hide-xs col-hide-sm">' + ddDisplay + '</td>';
       html += '<td>' + statusBadge(status) + '</td>';
       html += '<td class="col-actions">';
-      html += '<button class="btn btn-sm btn-secondary" onclick="openDetail(\'' + code + '\')" aria-label="查看详情" style="margin-right:4px;">详情</button>';
-      html += '<button class="btn btn-sm btn-danger" onclick="deleteFavorite(\'' + code + '\', this)" aria-label="删除基金">删除</button>';
+      html += '<button class="btn btn-sm btn-secondary" data-action="detail" data-code="' + code + '" aria-label="查看详情" style="margin-right:4px;">详情</button>';
+      html += '<button class="btn btn-sm btn-danger" data-action="delete" data-code="' + code + '" aria-label="删除基金">删除</button>';
       html += '</td>';
       html += '</tr>';
     }
@@ -580,6 +581,19 @@ async function loadFavorites() {
       + '<h3>加载失败</h3><p>' + escapeHtml(e.message) + '</p>'
       + '<button class="btn btn-primary" onclick="loadFavorites()">重试</button>';
     tableCard.style.display = 'none';
+  }
+
+  // Event delegation for action buttons
+  if (tbody && !tbody.dataset.bound) {
+    tbody.dataset.bound = '1';
+    tbody.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const code = btn.dataset.code;
+      if (action === 'detail') openDetail(code);
+      else if (action === 'delete') deleteFavorite(code, btn);
+    });
   }
 }
 
@@ -903,7 +917,7 @@ function renderAnalysis(data, targetCode) {
     const llmReasoning = agents.llm.reasoning;
     try {
       if (typeof marked !== 'undefined' && marked.parse) {
-        html += '<div class="llm-reasoning-box">' + marked.parse(llmReasoning) + '</div>';
+        html += '<div class="llm-reasoning-box">' + DOMPurify.sanitize(marked.parse(llmReasoning)) + '</div>';
       } else {
         // Fallback: simple markdown-like rendering
         html += '<div class="llm-reasoning-box"><pre style="white-space:pre-wrap;font-size:13px;font-family:inherit;">' + escapeHtml(llmReasoning) + '</pre></div>';

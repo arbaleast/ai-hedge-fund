@@ -5,7 +5,7 @@ import logging
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.services import quotes
 
@@ -24,7 +24,7 @@ def quote_single(code: str) -> dict:
 
 
 @router.get("/favorites/refresh")
-async def batch_refresh(request: Request):
+async def batch_refresh(request: Request) -> Response:
     """SSE 端点 — 批量刷新所有 favorites 的实时行情. 决策: GET (EventSource 限制)."""
     if quotes._refresh_running:
         raise HTTPException(status_code=409, detail="refresh already running")

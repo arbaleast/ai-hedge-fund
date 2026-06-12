@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api")
 
 
 @router.get("/favorites")
-async def favorites_list():
+async def favorites_list() -> list:
     """返回所有 favorites + 实时 metrics. 单只失败仅影响该行 status, 不整体 500."""
     raw = list_favorites()
     results: list[dict] = []
@@ -38,7 +38,7 @@ async def favorites_add(
     buy_amount: float = Form(...),
     buy_date: str = Form(...),
     note: str = Form(""),
-):
+) -> dict:
     """5 字段必填. 校验日期格式, 价格/数量正数, code 长度."""
     if len(code) < 1 or len(code) > 6:
         raise HTTPException(422, detail={"field": "code", "msg": "长度 1-6 位"})
@@ -60,7 +60,7 @@ async def favorites_update(
     buy_amount: float | None = Form(None),
     buy_date: str | None = Form(None),
     note: str | None = Form(None),
-):
+) -> dict:
     """部分字段更新. 全 None 返 422."""
     if all(v is None for v in (name, buy_price, buy_amount, buy_date, note)):
         raise HTTPException(422, detail={"msg": "至少提供一个更新字段"})
@@ -69,6 +69,6 @@ async def favorites_update(
 
 
 @router.delete("/favorites/{code}")
-async def favorites_remove(code: str):
+async def favorites_remove(code: str) -> dict:
     remove_favorite(code)
     return {"ok": True}
