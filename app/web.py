@@ -3,7 +3,7 @@ import logging
 import sys
 from fastapi import FastAPI
 
-from app.routes import ui, analyze, history, favorites
+from app.routes import ui, analyze, history, favorites, quote
 
 # ===== 日志配置 — 关键：stderr 输出到 docker logs =====
 logging.basicConfig(
@@ -21,3 +21,4 @@ app.include_router(ui.router)
 app.include_router(analyze.router)
 app.include_router(history.router)
 app.include_router(favorites.router)
+app.include_router(quote.router)
