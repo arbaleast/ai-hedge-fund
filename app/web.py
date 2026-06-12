@@ -1,8 +1,6 @@
 """AI 基金分析 Web UI — 现代化界面 (P0-3 + 持久化)"""
 import logging
 import sys
-from contextlib import redirect_stdout
-
 from fastapi import FastAPI
 
 from app.routes import ui, analyze, history, favorites

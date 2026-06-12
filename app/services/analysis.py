@@ -2,8 +2,6 @@
 import logging
 import sys
 import time
-from contextlib import redirect_stdout
-
 logger = logging.getLogger(__name__)
 
 
@@ -176,6 +174,6 @@ def _run_and_save(codes_str: str, months: int, reasoning: bool, use_llm: bool, b
             record_id = save_analysis(codes, saved, months, use_llm, backtest)
             return result, record_id
         except Exception as e:
-            print(f"  [WARN] Save to DB failed: {e}", file=sys.stderr)
+            logger.warning(f"  [WARN] Save to DB failed: {e}")
             return result, 0
     return result, 0
