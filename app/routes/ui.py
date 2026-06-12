@@ -865,8 +865,13 @@ async function openDetail(code) {
     body.innerHTML = '<div style="text-align:center;padding:30px;color:#ef4444;">'
       + '<p style="font-size:16px;font-weight:600;margin-bottom:8px;">加载分析失败</p>'
       + '<p style="font-size:13px;color:#64748b;">' + escapeHtml(e.message) + '</p>'
-      + '<button class="btn btn-primary" style="margin-top:16px;" onclick="openDetail(\'' + code + '\')">重试</button>'
+      + '<button class="btn btn-primary" style="margin-top:16px;" data-retry-detail>重试</button>'
       + '</div>';
+    panel.addEventListener('click', function(e) {
+      if (e.target.closest('[data-retry-detail]')) {
+        openDetail(code);
+      }
+    }, { once: true });
   }
 }
 
@@ -1012,5 +1017,5 @@ document.addEventListener('DOMContentLoaded', loadFavorites);
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index():
+async def index() -> str:
     return HTML
