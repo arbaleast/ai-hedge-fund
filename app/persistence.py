@@ -35,6 +35,7 @@ def get_conn():
             )
             if not cur.fetchone():
                 _init_schema(conn)
+        _migrate_favorites(conn)
         yield conn
     finally:
         conn.commit()
@@ -65,6 +66,22 @@ def _init_schema(conn: sqlite3.Connection):
             added_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
     """)
+
+
+def _migrate_favorites(conn: sqlite3.Connection):
+    """幂等迁移 fund_favorites 表 — 安全多次调用"""
+    new_columns = {
+        "buy_price": "REAL",
+        "buy_amount": "REAL",
+        "buy_date": "TEXT",
+    }
+    for col, typ in new_columns.items():
+        try:
+            conn.execute(f"ALTER TABLE fund_favorites ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                raise
+    conn.commit()
 
 
 def save_analysis(
@@ -128,13 +145,35 @@ def get_analysis(record_id: int) -> Optional[dict]:
         return json.loads(row["result_json"])
 
 
-def add_favorite(code: str, name: str = "", note: str = ""):
-    """添加关注基金"""
+def add_favorite(code: str, name: str, buy_price: float, buy_amount: float, buy_date: str, note: str = ""):
+    """添加关注 (5 字段必填, app-layer 校验)"""
     with get_conn() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO fund_favorites (code, name, note)
-               VALUES (?, ?, ?)""",
-            (code, name, note),
+            """INSERT OR REPLACE INTO fund_favorites (code, name, note, buy_price, buy_amount, buy_date)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (code, name, note, buy_price, buy_amount, buy_date),
+        )
+
+
+def put_favorite(
+    code: str,
+    name: str | None = None,
+    buy_price: float | None = None,
+    buy_amount: float | None = None,
+    buy_date: str | None = None,
+    note: str | None = None,
+):
+    """更新关注基金 (部分字段更新, None 保留原值)"""
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE fund_favorites SET
+                   name = COALESCE(?, name),
+                   buy_price = COALESCE(?, buy_price),
+                   buy_amount = COALESCE(?, buy_amount),
+                   buy_date = COALESCE(?, buy_date),
+                   note = COALESCE(?, note)
+               WHERE code = ?""",
+            (name, buy_price, buy_amount, buy_date, note, code),
         )
 
 
@@ -148,6 +187,6 @@ def list_favorites() -> list[dict]:
     """列出关注的基金"""
     with get_conn() as conn:
         cur = conn.execute(
-            "SELECT code, name, note, added_at FROM fund_favorites ORDER BY added_at DESC"
+            "SELECT code, name, note, buy_price, buy_amount, buy_date, added_at FROM fund_favorites ORDER BY added_at DESC"
         )
         return [dict(r) for r in cur.fetchall()]
