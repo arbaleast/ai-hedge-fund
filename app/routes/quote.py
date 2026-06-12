@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import AsyncGenerator
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
@@ -29,7 +30,7 @@ async def batch_refresh(request: Request) -> Response:
     if quotes._refresh_running:
         raise HTTPException(status_code=409, detail="refresh already running")
 
-    async def event_stream():
+    async def event_stream() -> AsyncGenerator[str, None]:
         try:
             async for event in quotes.batch_refresh_quotes():
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
