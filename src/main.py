@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """AI 基金分析系统 — LangGraph 编排版"""
 
-import argparse
 import logging
 import time
 from datetime import datetime, timedelta
@@ -347,37 +346,3 @@ def _generate_summary(analyses: dict[str, Any]) -> dict:
             "total_agents": n,
         }
     return summary
-
-
-# ===== CLI =====
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="AI 基金分析系统 (LangGraph)")
-    parser.add_argument("--codes", "-c", nargs="+", required=True, help="基金代码")
-    parser.add_argument("--months", "-m", type=int, default=24, help="分析回溯月数")
-    parser.add_argument("--reasoning", "-r", action="store_true", help="显示推理过程")
-    parser.add_argument("--agents", "-a", nargs="+", choices=list(AGENT_REGISTRY.keys()),
-                        default=ALL_AGENTS, help="选定分析 agent")
-    parser.add_argument("--backtest", "-b", action="store_true", help="同时运行回测")
-    parser.add_argument("--capital", type=float, default=100000.0, help="回测初始资金")
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    result = analyze_fund(
-        fund_codes=args.codes,
-        months=args.months,
-        show_reasoning=args.reasoning,
-        selected_agents=args.agents,
-        backtest=args.backtest,
-        backtest_capital=args.capital,
-    )
-    print_fund_analysis(result, show_reasoning=args.reasoning)
-
-    if "backtesting" in result:
-        print("\n" + "=" * 60)
-        print("📊 回测结果")
-        for code, bt in result["backtesting"].items():
-            print()
-            print(bt.summary)
