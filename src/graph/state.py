@@ -1,51 +1,48 @@
-from typing_extensions import Annotated, Sequence, TypedDict
+"""LangGraph 状态定义 — AI 基金分析"""
 
-import operator
-from langchain_core.messages import BaseMessage
+from typing import Any, Optional
 
+from pydantic import BaseModel, Field
 
-import json
-
-
-def merge_dicts(a: dict[str, any], b: dict[str, any]) -> dict[str, any]:
-    return {**a, **b}
+from src.data.models import FundSignal, FundInfo, FundMetrics, FundNav
 
 
-# Define agent state
-class AgentState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], operator.add]
-    data: Annotated[dict[str, any], merge_dicts]
-    metadata: Annotated[dict[str, any], merge_dicts]
+class FundData(BaseModel):
+    """单只基金的完整数据"""
+    code: str
+    name: str = ""
+    info: Optional[FundInfo] = None
+    metrics: Optional[FundMetrics] = None
+    navs: list[FundNav] = Field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
 
 
-def show_agent_reasoning(output, agent_name):
-    print(f"\n{'=' * 10} {agent_name.center(28)} {'=' * 10}")
+class AgentState(BaseModel):
+    """LangGraph 状态 — 每个 Agent 使用独立字段避免并行写入冲突"""
 
-    def convert_to_serializable(obj):
-        if hasattr(obj, "to_dict"):  # Handle Pandas Series/DataFrame
-            return obj.to_dict()
-        elif hasattr(obj, "__dict__"):  # Handle custom objects
-            return obj.__dict__
-        elif isinstance(obj, (int, float, bool, str)):
-            return obj
-        elif isinstance(obj, (list, tuple)):
-            return [convert_to_serializable(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {key: convert_to_serializable(value) for key, value in obj.items()}
-        else:
-            return str(obj)  # Fallback to string representation
+    # 当前正在分析的基金
+    current_fund: Optional[FundData] = None
 
-    if isinstance(output, (dict, list)):
-        # Convert the output to JSON-serializable format
-        serializable_output = convert_to_serializable(output)
-        print(json.dumps(serializable_output, indent=2))
-    else:
-        try:
-            # Parse the string as JSON and pretty print it
-            parsed_output = json.loads(output)
-            print(json.dumps(parsed_output, indent=2))
-        except json.JSONDecodeError:
-            # Fallback to original string if not valid JSON
-            print(output)
+    # 所有基金的分析结果
+    fund_results: dict[str, Any] = Field(default_factory=dict)
 
-    print("=" * 48)
+    # 各 Agent 独立字段 (避免并行写入冲突)
+    signal_trend: Optional[dict] = None
+    signal_risk: Optional[dict] = None
+    signal_manager: Optional[dict] = None
+    signal_valuation: Optional[dict] = None
+    signal_peer: Optional[dict] = None
+    signal_llm: Optional[dict] = None
+    signal_holdings: Optional[dict] = None
+
+    # 已完成分析的基金代码列表
+    completed_codes: list[str] = Field(default_factory=list)
+
+    # 配置
+    show_reasoning: bool = False
+    use_llm: bool = False
+
+    # 工作流状态
+    remaining_codes: list[str] = Field(default_factory=list)
+    current_code: str = ""

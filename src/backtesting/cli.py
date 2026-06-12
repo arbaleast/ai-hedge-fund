@@ -1,172 +1,56 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+"""AI 基金分析系统 — 回测 CLI"""
 
-import sys
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import argparse
+import sys
+from datetime import datetime, timedelta
 
-from colorama import Fore, Style, init
-import questionary
-
-from .engine import BacktestEngine
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
-from src.utils.analysts import ANALYST_ORDER
-from src.main import run_hedge_fund
-from src.utils.ollama import ensure_ollama_and_model
+from src.tools.api import fetch_fund_info, fetch_nav_history
+from src.backtesting.engine import run_backtest
+from src.backtesting.strategy import sma_crossover_strategy, trend_following_strategy
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run backtesting engine (modular)")
-    parser.add_argument("--tickers", "--ticker", dest="tickers", type=str, required=False, help="Comma-separated tickers")
-    parser.add_argument(
-        "--end-date",
-        type=str,
-        default=datetime.now().strftime("%Y-%m-%d"),
-        help="End date YYYY-MM-DD",
-    )
-    parser.add_argument(
-        "--start-date",
-        type=str,
-        default=(datetime.now() - relativedelta(months=1)).strftime("%Y-%m-%d"),
-        help="Start date YYYY-MM-DD",
-    )
-    parser.add_argument("--initial-capital", type=float, default=100000)
-    parser.add_argument("--margin-requirement", type=float, default=0.0)
-    parser.add_argument("--analysts", type=str, required=False)
-    parser.add_argument("--analysts-all", action="store_true")
-    parser.add_argument("--ollama", action="store_true")
-
+def main():
+    parser = argparse.ArgumentParser(description="基金回测工具")
+    parser.add_argument("codes", nargs="+", help="基金代码")
+    parser.add_argument("--capital", type=float, default=100000, help="初始资金")
+    parser.add_argument("--months", type=int, default=24, help="回测周期（月）")
+    parser.add_argument("--strategy", choices=["sma", "trend"], default="sma",
+                        help="策略: sma(均线交叉), trend(趋势跟踪)")
     args = parser.parse_args()
-    init(autoreset=True)
 
-    tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else []
-
-    # Analysts selection is simplified; no interactive prompts here
-    if args.analysts_all:
-        selected_analysts = [a[1] for a in ANALYST_ORDER]
-    elif args.analysts:
-        selected_analysts = [a.strip() for a in args.analysts.split(",") if a.strip()]
+    if args.strategy == "sma":
+        strategy_fn = sma_crossover_strategy(short_window=20, long_window=60)
     else:
-        # Interactive analyst selection (same as legacy backtester)
-        choices = questionary.checkbox(
-            "Use the Space bar to select/unselect analysts.",
-            choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-            instruction="\n\nPress 'a' to toggle all.\n\nPress Enter when done to run the hedge fund.",
-            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-            style=questionary.Style(
-                [
-                    ("checkbox-selected", "fg:green"),
-                    ("selected", "fg:green noinherit"),
-                    ("highlighted", "noinherit"),
-                    ("pointer", "noinherit"),
-                ]
-            ),
-        ).ask()
-        if not choices:
-            print("\n\nInterrupt received. Exiting...")
-            return 1
-        selected_analysts = choices
-        print(
-            f"\nSelected analysts: "
-            f"{', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n"
-        )
+        strategy_fn = trend_following_strategy(buy_threshold=55, sell_threshold=45)
 
-    # Model selection simplified: default to first ordered model or Ollama flag
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
-        model_name = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-        if not model_name:
-            print("\n\nInterrupt received. Exiting...")
-            return 1
-        if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                print("\n\nInterrupt received. Exiting...")
-                return 1
-        if not ensure_ollama_and_model(model_name):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            return 1
-        model_provider = ModelProvider.OLLAMA.value
-        print(
-            f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
-        )
-    else:
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            return 1
-        model_name, model_provider = model_choice
-        model_info = get_model_info(model_name, model_provider)
-        if model_info and model_info.is_custom():
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                print("\n\nInterrupt received. Exiting...")
-                return 1
-        print(
-            f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
-        )
+    results = []
+    for code in args.codes:
+        print(f"获取 {code} 数据...")
+        info = fetch_fund_info(code)
+        navs = fetch_nav_history(code, months=args.months)
+        if not navs or len(navs) < 60:
+            print(f"  {code}: 数据不足，跳过")
+            continue
 
-    engine = BacktestEngine(
-        agent=run_hedge_fund,
-        tickers=tickers,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        initial_capital=args.initial_capital,
-        model_name=model_name,
-        model_provider=model_provider,
-        selected_analysts=selected_analysts,
-        initial_margin_requirement=args.margin_requirement,
-    )
+        name = info.name if info and info.name else code
+        result = run_backtest(code, name, navs, strategy_fn,
+                              initial_capital=args.capital)
+        results.append(result)
+        print()
+        print(result.summary)
+        print()
 
-    metrics = engine.run_backtest()
-    values = engine.get_portfolio_values()
-
-    # Minimal terminal output (no plots)
-    if values:
-        print(f"\n{Fore.WHITE}{Style.BRIGHT}ENGINE RUN COMPLETE{Style.RESET_ALL}")
-        last_value = values[-1]["Portfolio Value"]
-        start_value = values[0]["Portfolio Value"]
-        total_return = (last_value / start_value - 1.0) * 100.0 if start_value else 0.0
-        print(f"Total Return: {Fore.GREEN if total_return >= 0 else Fore.RED}{total_return:.2f}%{Style.RESET_ALL}")
-    if metrics.get("sharpe_ratio") is not None:
-        print(f"Sharpe: {metrics['sharpe_ratio']:.2f}")
-    if metrics.get("sortino_ratio") is not None:
-        print(f"Sortino: {metrics['sortino_ratio']:.2f}")
-    if metrics.get("max_drawdown") is not None:
-        md = abs(metrics["max_drawdown"]) if metrics["max_drawdown"] is not None else 0.0
-        if metrics.get("max_drawdown_date"):
-            print(f"Max DD: {md:.2f}% on {metrics['max_drawdown_date']}")
-        else:
-            print(f"Max DD: {md:.2f}%")
-
-    return 0
+    if len(results) > 1:
+        print("=" * 60)
+        print("排名 (按夏普比率)")
+        for i, r in enumerate(sorted(results, key=lambda r: r.sharpe_ratio, reverse=True)):
+            print(f"  {i+1}. {r.code} {r.name}: "
+                  f"收益{r.total_return_pct:+.2f}% | "
+                  f"夏普{r.sharpe_ratio:.2f} | "
+                  f"回撤{r.max_drawdown_pct:.1f}% | "
+                  f"超额{r.alpha:+.2f}%")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
-
-
-
-
+    main()
